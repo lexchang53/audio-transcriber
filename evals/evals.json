@@ -1,0 +1,23 @@
+{
+  "skill_name": "audio-transcriber",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "請幫我轉錄 @test-meeting-short.mp3 檔案，並形成逐字稿。第1位說話者是：張三，第2位說話者是：李四。請確保 Line、OK、App 等術語拼寫正確，並遵照指定的時間戳與換行規則。",
+      "expected_output": "AI 正確轉錄音訊，時間戳格式為 MM:SS，說話者標記為張三、李四，術語拼寫正確（Line、OK、App），且同一人發言不換行，換人發言時換行。同時在工作區建立 transcripts/YYYY-MM-DD-transcript.md 存檔。",
+      "files": ["test-meeting-short.mp3"]
+    },
+    {
+      "id": 2,
+      "prompt": "請幫我轉錄 @test-meeting-no-names.m4a。轉錄完成後，如果使用了預設標籤，請主動詢問我是否要替換說話者姓名。",
+      "expected_output": "AI 使用說話者 1、說話者 2 等預設標記完成轉錄並建立 Markdown 檔案，最後主動詢問使用者是否需要將代稱替換為真實姓名。",
+      "files": ["test-meeting-no-names.m4a"]
+    },
+    {
+      "id": 3,
+      "prompt": "請幫我轉錄這段 @test-meeting-long.mp3 錄音檔。這是一段較長的會議錄音，請在篇幅過長時適當暫停，輸出「繼續」提示以避免遺漏內容。",
+      "expected_output": "AI 在轉錄到特定長度時暫停，並輸出「[已轉錄至 MM:SS，尚有剩餘內容。請回覆「繼續」以輸出下一段。]」，且將前段內容寫入 transcripts 下的檔案中。",
+      "files": ["test-meeting-long.mp3"]
+    }
+  ]
+}
