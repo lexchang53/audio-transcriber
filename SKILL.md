@@ -19,97 +19,49 @@ This skill guides the AI Agent to read an @-attached audio or video file from th
    - **Path Guidance Rule**: If the user only pastes a local file path (e.g., `c:\recordings\meeting.mp4`), **DO NOT** use the `view_file` tool to read the file. You must immediately pause and guide the user: "Please use the `@` button in the chat to attach the file to the conversation so I can read it."
    - **Confirm File is Ready**: Proceed only after confirming the @-attached file is loaded correctly.
 3. **Key Detection & Engine Routing (Smart Routing)**:
-   - **Read Keys**: The AI must look for a `.env` file in the file's directory, the workspace root, or this skill's directory, or read `GEMINI_API_KEY` and `ASSEMBLYAI_API_KEY` from system environment variables. You can use local commands or a simple Python script for this data detection.
+   - **Read Keys**: Look for a `.env` file in the file's directory, the workspace root, or this skill's directory, or read `GEMINI_API_KEY` and `ASSEMBLYAI_API_KEY` from system environment variables.
    - **Routing Rules**:
      - **Scenario A: Only `GEMINI_API_KEY` exists** -> Automatically choose **Gemini API Engine**.
      - **Scenario B: Only `ASSEMBLYAI_API_KEY` exists** -> Automatically choose **AssemblyAI API Engine**.
      - **Scenario C: Both keys exist** -> Default to **Gemini API Engine** (free, high privacy). However, switch to **AssemblyAI API Engine** if the user explicitly mentions "speaker diarization", "high precision", "多人會議" (multi-person meeting, 3+ people), "diarization", or explicitly requests "AssemblyAI".
-     - **Scenario D: No keys found** -> 🔴 CHECKPOINT · 🛑 STOP: Pause and report the error. Guide the user to configure either `GEMINI_API_KEY` or `ASSEMBLYAI_API_KEY` in a `.env` file before continuing.
+     - **Scenario D: No keys found** -> 🔴 CHECKPOINT · 🛑 STOP: Pause and report the error. Guide the user to configure keys in a `.env` file before continuing.
 4. **Pre-processing (Phase 0: Media Conversion & Audio Extraction)**:
    - Run the pre-processing script `scripts/audio_prep.py` to extract and compress the audio from the input audio or video file.
-   - **Compression Rule**: The audio must be extracted and compressed into a 32 kbps single-channel 16000Hz OGG (Opus) file to minimize size (ideally under 25MB) and ensure very low Token usage.
+   - **Compression Rule**: The audio must be compressed into a 32 kbps single-channel 16000Hz OGG (Opus) file to minimize size and ensure very low Token usage.
    - **Command**: `python [Path to audio_prep.py] <input_file> <output_file.ogg>`
-   - This step ensures a uniform format for the Gemini File API, and because pure audio is charged at only 12.5 tokens/sec, even 23 hours of content fits within the 1M token window without any chunking.
-5. **Speech Recognition & Speaker Diarization (Phase 1: Raw Transcription)**:
-   - Based on the chosen engine, use the preprocessed OGG file with the generated Python script to transcribe the audio.
-   - Distinguish different speakers and assign them labels (specified names or defaults like "Speaker A", "Speaker B").
-   - Transcribe the content and **write directly** to a raw backup file `[YYYY-MM-DD]-raw.md` (saved in the same directory as the input file).
-   - **Important Defensive Rule**: Once `_raw.md` is written, you **MUST NOT** modify or delete it in subsequent steps. It serves as the secure original backup.
+5. **Speech Recognition & Diarization (Phase 1: Raw Transcription)**:
+   - Write a temporary script (e.g., `transcribe_task.py`) to execute the transcription.
+   - **Robust API Retry & Fallback Mechanism (Defensive Design)**:
+     - The script **must** include a retry loop (e.g., 3 attempts, waiting 5 seconds) to handle transient 503 (Unavailable) errors from the API.
+     - The script **must** support model fallback. If the primary model `gemini-2.5-flash` fails continuously, fallback to `gemini-1.5-flash` as a backup to guarantee execution.
+   - **Output Format**: Format strictly as `[ HH:MM:SS ] {Speaker}: {Content}`. Write directly to a raw backup file `[YYYY-MM-DD]-raw.md` (saved in the same directory as the input file). Do not modify or delete this file once written.
 6. **Formatting & Post-Processing (Phase 2: Transcript Output)**:
-   - Read the generated `_raw.md` content.
-   - Format the text according to the formatting rules (merge consecutive utterances by the same speaker, apply glossary replacements if applicable, clean up format).
-   - Write the final formatted result to `[YYYY-MM-DD]-transcript.md` (saved in the same directory as the input file).
-   - If any errors occur during formatting or glossary replacement, always regenerate the transcript from `_raw.md`. **NEVER** re-listen to or re-transcribe the original audio/video.
+   - Invoke `scripts/post_process.py` to format the transcript:
+     - **Robust Time Parsing**: The post-processor uses a high-tolerance regex (`^\s*(?:(\d+)\s*:\s*)?(\d+)\s*:\s*(\d+)\s*$`) to capture and standardize timestamps, ensuring that formatting variances (like extra spaces or missing leading zeros) do not break time parsing or cause timestamps to reset to `[00:00]`.
+     - **Glossary & Merger**: Apply terms from `references/glossary.md` and merge consecutive utterances by the same speaker.
+   - Write the final formatted result to `[YYYY-MM-DD]-transcript.md`.
 7. **Post-Processing Name Replacement**:
-   - 🔴 CHECKPOINT · 🛑 STOP: If default labels (e.g., Speaker A, Speaker B) were used during transcription, you must proactively pause after transcription completes and ask the user if they want to replace them with real names. If provided, read `_raw.md`, perform a full-text name replacement, and regenerate `_transcript.md`.
+   - 🔴 CHECKPOINT · 🛑 STOP: Proactively ask the user if they want to replace speaker labels (e.g., Speaker A, Speaker B) with real names. If provided, update the speaker mapping in `scripts/post_process.py` and run it again to update the final transcript.
 
-## Dual-Engine/Script execution Details
+## Long Audio & Output Token Limits
 
-The executing agent should write/update a temporary script (e.g. `transcribe_task.py`) or run helper commands to execute the transcription.
+- **Pre-set Strategy**: Pure audio files up to 4 hours can be transcribed in a single API call due to the Gemini 65,536 output token capacity (roughly 50,000 words). Thus, segment chunking is **not required by default**, preserving timestamp continuity and simple flow.
+- **Defensive Hot-Patching for Looping Errors**:
+  - For long bilingual or noisy audio, the model might occasionally loop (e.g., repeat the same word endlessly like "under under under") near the end of the transcription.
+  - **Do not restart the whole 2-hour transcription**. Instead, run the hot-patching script `scripts/patch_transcript.py` to extract, transcribe, and repair only the affected segment:
+    `python [Path to patch_transcript.py] --audio <audio_file> --raw-md <raw_md> --start <error_start_time> [--end <error_end_time>]`
+  - This script automatically transcribes the patch segment with fallbacks, shifts the timestamp offsets, replaces the looping segment in the `_raw.md`, and rebuilds the final `_transcript.md`.
 
-- **Error Handling & Retry Mechanism**: All scripts/commands must include safety nets for network issues, API limit, etc.
+## Bundled Scripts Usage
 
-### 1. Gemini API Engine Specification (Default / Cloud-native)
-- **Dependencies**: `google-genai` SDK, `python-dotenv`, local `ffmpeg`.
-- **Why Gemini?**: Native. High precision, handles multi-language.
-- **Workflow**:
-  1. **Pre-processing**: Run `scripts/audio_prep.py` to extract 32 kbps OGG audio.
-  2. **Upload to Google File API**:
-     - Use `client.files.upload()`. Poll `client.files.get(name=file.name)` until `file.state` is `"ACTIVE"`.
-  3. **Call Gemini Model**:
-     - Load `GEMINI_MODEL` from `.env` (default to `gemini-2.5-flash`).
-     - Load `GEMINI_API_KEY`.
-     - **Critical Prompt Design**: The prompt must be in **English** to prevent the model from translating non-English audio. Use the following prompt:
-       ```python
-       prompt = """You are a professional audio/video transcriber. Listen carefully to the audio/video and complete the following tasks:
+- **Audio prep**: `python scripts/audio_prep.py <input> <output.ogg>`
+- **Post-processor**: `python scripts/post_process.py <raw.md> <transcript.md>`
+- **Hot-patching**: `python scripts/patch_transcript.py --audio <audio> --raw-md <raw.md> --start <start_time> [--end <end_time>]`
 
-       1. Transcribe all spoken content faithfully without omitting anything.
-       2. Transcribe in the original spoken language; do not translate. For example, if the audio is in English, output English text. If it is mixed languages, output the original mixed languages.
-       3. Distinguish different speakers and assign a label to each (e.g., Speaker A, Speaker B, Speaker C).
-       4. Mark the exact start timestamp for each utterance in HH:MM:SS format.
-       5. Format strictly as: {Timestamp} {Speaker}: {Content}
-       6. If a single speaker speaks continuously for over 3 minutes, or there is a major topic shift, proactively break the paragraph and mark a new timestamp.
+## Banned Actions & Anti-Patterns (反模式與黑名單)
 
-       Start outputting the transcript directly without any preamble."""
-       ```
-     - **Config Settings**: Explicitly set `max_output_tokens=65536`. If the model is `gemini-2.5-flash`, you **must** disable thinking (`thinking_config = types.ThinkingConfig(thinking_budget=0)`) to avoid consuming the output token budget. Set a 10-minute HTTP timeout.
-  4. **Write Results**:
-     - Write the raw transcript directly to `[YYYY-MM-DD]-raw.md`.
-  5. **Cleanup**: Delete the uploaded file using `client.files.delete()`.
+To guarantee safety, accuracy, and efficiency, you MUST strictly avoid the following actions:
 
-### 2. AssemblyAI API Engine Specification
-- **Dependencies**: `assemblyai` SDK, `python-dotenv`.
-- **Workflow**:
-  1. **Load Key**: `ASSEMBLYAI_API_KEY`. Set `aai.settings.api_key = os.environ["ASSEMBLYAI_API_KEY"]` directly.
-  2. **Transcription Configuration**:
-     ```python
-     import assemblyai as aai
-     
-     # Use "zh" for traditional Chinese, or other languages as needed.
-     lang_code = "zh"
-     
-     boost_words = ["SpecificTerm", "PersonName", "BrandName"] 
-     
-     config = aai.TranscriptionConfig(
-         speech_models=["universal-2"],
-         speaker_labels=True,
-         language_code=lang_code,
-         word_boost=boost_words,
-         boost_param="high",
-     )
-     ```
-  3. **Execute**: Use `transcriber.transcribe(audio_path)`.
-  4. **Parse & Format**:
-     - Convert `start` (milliseconds) to `MM:SS` or `HH:MM:SS`.
-     - Write formatted `{Timestamp} Speaker {speaker}: {text}` to `[YYYY-MM-DD]-raw.md`.
-
-## Output Format Specification
-- **Pattern**: `(Timestamp) (Speaker): (Content)`
-- **Timestamp Rules**: `MM:SS` or `HH:MM:SS`.
-
-## Glossary and Term Replacement
-- Refer to `references/glossary.md` if the target language is Chinese.
-- **Do not use regex or other high-risk text replacement scripts** that might accidentally strip timestamps or misalign speaker tags.
-
-## Long Audio Checkpoint Mechanism
-- Pure audio files up to 23 hours can be transcribed in a single API call due to the low token rate (12.5 tokens/sec). Thus, segment chunking and checkpoint resumption are not required, simplifying execution and ensuring flawless timestamp continuity.
+1. **NO view_file on Binary Media**: Never invoke the `view_file` tool on raw audio or video files (e.g., `.mp3`, `.mp4`). This will flood the context window with binary garbage and crash the session. Proactively guide the user to @-attach the file instead.
+2. **NO Redundant Re-transcription**: If formatting, naming, or glossary replacement fails, always debug and run the post-processing script (`scripts/post_process.py`) using the existing `_raw.md`. Never call the Gemini API to re-transcribe the original audio/video, which wastes time and API quota.
+3. **NO Full Re-transcription for Local Loops**: If a looping error (e.g., repeated "under") or a timestamp error is reported for a specific section of a long transcript, never re-transcribe the entire 2-hour audio. Always use the hot-patching tool (`scripts/patch_transcript.py`) to target and repair only the affected segment.

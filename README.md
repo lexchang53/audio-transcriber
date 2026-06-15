@@ -10,7 +10,7 @@
 This skill guides the AI Agent to read an audio or video file (such as .mp3, .wav, .m4a, .mp4, etc.) and transcribe it into a verbatim transcript using its multimodal capabilities or external APIs. It utilizes a dual-engine architecture to cover different use cases.
 
 #### 1. Gemini API Engine (Default)
-- **Why use it?**: It leverages Gemini's native multimodal audio understanding. It is incredibly fast, supports extremely long audio/video (up to 22 hours) without the need for manual chunking, and provides native multi-language transcription without translation errors.
+- **Why use it?**: It leverages Gemini's native multimodal audio understanding. It is incredibly fast, supports extremely long audio/video (up to 22 hours input, though single-turn transcript output is limited to ~4 hours of speech due to generation token constraints) without the need for manual chunking, and provides native multi-language transcription without translation errors.
 - **Cost**: You can use the **Free Tier**, which is more than enough for daily transcription needs. *Note: If you want to prevent Google from using your audio data and transcripts for model training, you must provide a paid-tier (pay-as-you-go) Gemini API Key.*
 - **Get an API Key**: Apply for an API key at [Google AI Studio](https://aistudio.google.com/).
 
@@ -64,7 +64,7 @@ To trigger the skill, simply **@ mention** an audio or video file (e.g., @meetin
 此技能指引 AI Agent 讀取對話中的音訊檔（如 .mp3）或影音檔（影片，如 .mp4），並將其轉錄為逐字稿。本技能採用雙引擎架構，以滿足不同的使用情境。
 
 #### 1. Gemini API 引擎（預設）
-- **為什麼使用它？**：利用 Gemini 原生的多模態音訊理解能力。速度極快，支援超長音訊/影音（高達 22 小時）且無需手動分段，並原生支援多語言轉錄而不會產生錯誤翻譯。
+- **為什麼使用它？**：利用 Gemini 原生的多模態音訊理解能力。速度極快，支援超長音訊/影音（音訊輸入高達 22 小時，但受限於單次回答字數上限，逐字稿長度最大約 4 小時）且無需手動分段，並原生支援多語言轉錄而不會產生錯誤翻譯。
 - **費用**：您可以使用 **免費版 (Free Tier)** 的 API，其額度對於日常轉錄需求已綽綽有餘。*註：如果您不希望您的語音與轉錄數據被 Google 用於模型訓練用途，請提供付費版 (Pay-as-you-go) 的 Gemini API Key，以保障數據隱私。*
 - **申請金鑰**：請前往 [Google AI Studio](https://aistudio.google.com/) 申請 API Key。
 
